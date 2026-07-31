@@ -5089,9 +5089,13 @@ void m_IDirectDrawX::BackupAndResetState(DRAWSTATEBACKUP& DrawStates, DWORD Widt
 {
 	// Sampler states
 	d3d9Device->GetSamplerState(0, D3DSAMP_MAGFILTER, &DrawStates.ssMagFilter);
+	d3d9Device->GetSamplerState(0, D3DSAMP_MINFILTER, &DrawStates.ssMinFilter);
 	d3d9Device->GetSamplerState(1, D3DSAMP_ADDRESSU, &DrawStates.ss1addressU);
 	d3d9Device->GetSamplerState(1, D3DSAMP_ADDRESSV, &DrawStates.ss1addressV);
 	d3d9Device->SetSamplerState(0, D3DSAMP_MAGFILTER, IsUsingPalette || !Config.DdrawLinearTextureFilter ? D3DTEXF_POINT : D3DTEXF_LINEAR);
+	// Presenting a primary that is larger than the backbuffer is
+	// minification, which MAGFILTER does not cover.
+	d3d9Device->SetSamplerState(0, D3DSAMP_MINFILTER, IsUsingPalette || !Config.DdrawLinearTextureFilter ? D3DTEXF_POINT : D3DTEXF_LINEAR);
 	d3d9Device->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
 	d3d9Device->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
 
@@ -5189,6 +5193,7 @@ void m_IDirectDrawX::RestoreState(DRAWSTATEBACKUP& DrawStates)
 {
 	// Restore sampler states
 	d3d9Device->SetSamplerState(0, D3DSAMP_MAGFILTER, DrawStates.ssMagFilter);
+	d3d9Device->SetSamplerState(0, D3DSAMP_MINFILTER, DrawStates.ssMinFilter);
 	d3d9Device->SetSamplerState(1, D3DSAMP_ADDRESSU, DrawStates.ss1addressU);
 	d3d9Device->SetSamplerState(1, D3DSAMP_ADDRESSV, DrawStates.ss1addressV);
 
@@ -5413,7 +5418,12 @@ HRESULT m_IDirectDrawX::CopyPrimarySurface(m_IDirectDrawSurfaceX* pPrimarySurfac
 	}
 
 	// Copy render target
-	HRESULT hr = d3d9Device->StretchRect(pRenderTarget, pSrcRect, pDestBuffer, pDestRect, D3DTEXF_NONE);
+	// When the primary is larger than the backbuffer this stretch is the
+	// supersampling downscale, and point filtering throws the extra
+	// resolution away; honour DdrawLinearTextureFilter here the same way
+	// the textured-quad path does.
+	HRESULT hr = d3d9Device->StretchRect(pRenderTarget, pSrcRect, pDestBuffer, pDestRect,
+		Config.DdrawLinearTextureFilter ? D3DTEXF_LINEAR : D3DTEXF_NONE);
 	if (FAILED(hr))
 	{
 		LOG_LIMIT(100, __FUNCTION__ << " Error: failed to copy primary render target!");

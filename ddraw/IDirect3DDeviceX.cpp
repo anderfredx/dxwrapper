@@ -2318,7 +2318,11 @@ HRESULT m_IDirect3DDeviceX::SetRenderState(D3DRENDERSTATETYPE dwRenderStateType,
 			case D3DFILTER_NEAREST:
 			case D3DFILTER_LINEAR:
 				SetD9SamplerState(0, D3DSAMP_MINFILTER, dwRenderState);
-				return SetD9SamplerState(0, D3DSAMP_MIPFILTER, D3DTFP_NONE);
+				// With forced mipmap autogen the mips exist even though the
+				// game asked for an unmipped filter; sampling them is what
+				// stops distant-texture shimmer.
+				return SetD9SamplerState(0, D3DSAMP_MIPFILTER,
+					Config.DdrawForceMipMapAutoGen ? D3DTFP_LINEAR : D3DTFP_NONE);
 			case D3DFILTER_MIPNEAREST:
 				SetD9SamplerState(0, D3DSAMP_MINFILTER, D3DTFN_POINT);
 				return SetD9SamplerState(0, D3DSAMP_MIPFILTER, D3DTFP_POINT);
@@ -6515,6 +6519,23 @@ void m_IDirect3DDeviceX::SetDrawStates(DWORD dwVertexTypeDesc, DWORD& dwFlags, D
 		if (DeviceStates.RenderState[D3DRS_ZENABLE].Set)
 		{
 			(*d3d9Device)->SetRenderState(D3DRS_ZENABLE, DeviceStates.RenderState[D3DRS_ZENABLE].State);
+		}
+		else
+		{
+			// In Direct3D 7 attaching a z-buffer enables depth testing on its
+			// own, so an application never has to set D3DRENDERSTATE_ZENABLE
+			// and many never do.  Direct3D 9 has no such rule: the device is
+			// created with EnableAutoDepthStencil FALSE, and every path that
+			// disables depth for a 2D blit or resets the device leaves
+			// D3DRS_ZENABLE at D3DZB_FALSE.  SetDepthStencilSurface turns it
+			// back on once, but nothing restores it afterwards when the
+			// application has not set it, so depth testing stays off for the
+			// rest of the frame and solid geometry renders see-through with
+			// back faces showing through front ones.  Follow the Direct3D 7
+			// default instead: depth testing is on whenever a depth-stencil
+			// surface is attached.
+			(*d3d9Device)->SetRenderState(D3DRS_ZENABLE,
+				ddrawParent && ddrawParent->GetDepthStencilSurface() ? D3DZB_TRUE : D3DZB_FALSE);
 		}
 
 		// Check Multi-Sample Type

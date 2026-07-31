@@ -677,6 +677,18 @@ HRESULT m_IDirectDrawSurfaceX::Blt(LPRECT lpDestRect, LPDIRECTDRAWSURFACE7 lpDDS
 					((dwFlags & DDBLT_DDFX) && (lpDDBltFx->dwDDFX & DDBLTFX_MIRRORLEFTRIGHT) ? BLT_MIRRORLEFTRIGHT : 0) |
 					((dwFlags & DDBLT_DDFX) && (lpDDBltFx->dwDDFX & DDBLTFX_MIRRORUPDOWN) ? BLT_MIRRORUPDOWN : 0);
 
+				// KDR-DIAG: which key type each blit asks for, and whether the
+				// source surface actually carries one.
+				if (dwFlags & (DDBLT_KEYDESTOVERRIDE | DDBLT_KEYSRCOVERRIDE | DDBLT_KEYDEST | DDBLT_KEYSRC))
+				{
+					LOG_LIMIT(3000, __FUNCTION__ << " KDRBLTKEY bltFlags=" << (DWORD)dwFlags <<
+						" src=" << lpDDSrcSurfaceX <<
+						" srcHasCK=" << (DWORD)((lpDDSrcSurfaceX->surfaceDesc2.dwFlags & DDSD_CKSRCBLT) != 0) <<
+						" srcCKlow=" << (DWORD)lpDDSrcSurfaceX->surfaceDesc2.ddckCKSrcBlt.dwColorSpaceLowValue <<
+						" srcCKhigh=" << (DWORD)lpDDSrcSurfaceX->surfaceDesc2.ddckCKSrcBlt.dwColorSpaceHighValue <<
+						" dst=" << (lpDestRect ? lpDestRect->left : -1) << "," << (lpDestRect ? lpDestRect->top : -1));
+				}
+
 				// Get color key
 				DDCOLORKEY ColorKey = {};
 				if (dwFlags & DDBLT_KEYDESTOVERRIDE)
@@ -2950,6 +2962,14 @@ HRESULT m_IDirectDrawSurfaceX::SetColorKey(DWORD dwFlags, LPDDCOLORKEY lpDDColor
 			return DDERR_INVALIDPARAMS;
 		}
 
+		// KDR-DIAG: DxWrapper collapses a key range to its low value, so report
+		// what the game actually asked for before that happens.
+		LOG_LIMIT(3000, __FUNCTION__ << " KDRSETKEY surface=" << this <<
+			" flags=" << (DWORD)dwFlags <<
+			" low=" << (lpDDColorKey ? (DWORD)lpDDColorKey->dwColorSpaceLowValue : 0) <<
+			" high=" << (lpDDColorKey ? (DWORD)lpDDColorKey->dwColorSpaceHighValue : 0) <<
+			" null=" << (DWORD)(lpDDColorKey == nullptr));
+
 		// Check for color space
 		if (lpDDColorKey && (dwFlags & DDCKEY_COLORSPACE) && lpDDColorKey->dwColorSpaceLowValue != lpDDColorKey->dwColorSpaceHighValue)
 		{
@@ -4705,7 +4725,10 @@ HRESULT m_IDirectDrawSurfaceX::CreateD9Surface()
 
 			// Determine usage
 			surface.Usage = 0;
-			if (Config.DdrawForceMipMapAutoGen && MipMapLevel > 1 && (surface.Pool == D3DPOOL_DEFAULT || surface.Pool == D3DPOOL_MANAGED))
+			// Do not require the game to have created mip levels: a DX7-era
+			// engine that never mipmaps is exactly the case where forcing
+			// autogen removes texture shimmer under minification.
+			if (Config.DdrawForceMipMapAutoGen && (surface.Pool == D3DPOOL_DEFAULT || surface.Pool == D3DPOOL_MANAGED))
 			{
 				surface.Usage = D3DUSAGE_AUTOGENMIPMAP;
 			}
@@ -7050,6 +7073,21 @@ HRESULT m_IDirectDrawSurfaceX::SaveDXTDataToDDS(const void *data, size_t dataSiz
 
 HRESULT m_IDirectDrawSurfaceX::Load(LPDIRECTDRAWSURFACE7 lpDestTex, LPPOINT lpDestPoint, LPDIRECTDRAWSURFACE7 lpSrcTex, LPRECT lprcSrcRect, DWORD dwFlags)
 {
+	// KDR-DIAG: character textures render partly transparent.  Their alpha
+	// has to arrive somehow; this is one of the routes that bypasses
+	// CopySurface entirely.
+	{
+		m_IDirectDrawSurfaceX* KdrSrc = nullptr;
+		m_IDirectDrawSurfaceX* KdrDst = nullptr;
+		if (lpSrcTex) lpSrcTex->QueryInterface(IID_GetInterfaceX, (LPVOID*)&KdrSrc);
+		if (lpDestTex) lpDestTex->QueryInterface(IID_GetInterfaceX, (LPVOID*)&KdrDst);
+		LOG_LIMIT(200, __FUNCTION__ << " KDRLOADDIAG srcFmt=" <<
+			(DWORD)(KdrSrc ? KdrSrc->GetSurfaceFormat() : D3DFMT_UNKNOWN) <<
+			" dstFmt=" << (DWORD)(KdrDst ? KdrDst->GetSurfaceFormat() : D3DFMT_UNKNOWN) <<
+			" srcAlpha=" << (DWORD)(KdrSrc ? KdrSrc->HasAlphaChannel(false) : 0) <<
+			" dstAlpha=" << (DWORD)(KdrDst ? KdrDst->HasAlphaChannel(false) : 0) <<
+			" flags=" << (DWORD)dwFlags);
+	}
 	if (!lpDestTex || !lpSrcTex)
 	{
 		return  DDERR_INVALIDPARAMS;
@@ -7204,6 +7242,39 @@ HRESULT m_IDirectDrawSurfaceX::CopySurface(m_IDirectDrawSurfaceX* pSourceSurface
 		abs((SrcRect.right - SrcRect.left) - (DestRect.right - DestRect.left)) > 1 ||		// Width size
 		abs((SrcRect.bottom - SrcRect.top) - (DestRect.bottom - DestRect.top)) > 1;			// Height size
 	const bool IsColorKey = ((dwFlags & BLT_COLORKEY) != 0);
+	// Bits the source format does not use must be excluded from the colour key
+	// comparison.  A cyan texel in X8R8G8B8 reads as 0xFF00FFFF while the key
+	// the application set is 0x0000FFFF, so an unmasked compare never matches
+	// and the key colour is copied through instead of being skipped.
+	DWORD ColorKeyMask = 0xFFFFFFFF;
+	switch (SrcFormat)
+	{
+	case D3DFMT_X8R8G8B8:
+	case D3DFMT_X8B8G8R8:
+										ColorKeyMask = 0x00FFFFFF; break;
+	case D3DFMT_X1R5G5B5:				ColorKeyMask = 0x00007FFF; break;
+	case D3DFMT_X4R4G4B4:				ColorKeyMask = 0x00000FFF; break;
+	default:							break;
+	}
+
+	// A source format without alpha copied into a destination that has one
+	// leaves the alpha bits holding whatever the source happened to contain,
+	// which is normally zero.  The result is a texture that renders fully
+	// transparent even though the application never asked for transparency.
+	DWORD AlphaOrMask = 0;
+	if ((SrcFormat == D3DFMT_X8R8G8B8 && DestFormat == D3DFMT_A8R8G8B8) ||
+		(SrcFormat == D3DFMT_X8B8G8R8 && DestFormat == D3DFMT_A8B8G8R8))
+	{
+		AlphaOrMask = 0xFF000000;
+	}
+	else if (SrcFormat == D3DFMT_X1R5G5B5 && DestFormat == D3DFMT_A1R5G5B5)
+	{
+		AlphaOrMask = 0x00008000;
+	}
+	else if (SrcFormat == D3DFMT_X4R4G4B4 && DestFormat == D3DFMT_A4R4G4B4)
+	{
+		AlphaOrMask = 0x0000F000;
+	}
 	const bool IsMirrorLeftRight = ((dwFlags & BLT_MIRRORLEFTRIGHT) != 0);
 	const bool IsMirrorUpDown = ((dwFlags & BLT_MIRRORUPDOWN) != 0);
 	const DWORD D3DXFilter =
@@ -7211,6 +7282,30 @@ HRESULT m_IDirectDrawSurfaceX::CopySurface(m_IDirectDrawSurfaceX* pSourceSurface
 		(Filter & D3DTEXF_LINEAR) ? D3DX_FILTER_LINEAR :									// Use linear filtering when requested by the application
 		(IsStretchRect) ? D3DX_FILTER_POINT :												// Default to point filtering when stretching the rect, same as DirectDraw
 		D3DX_FILTER_NONE;
+
+	// KDR-DIAG: every 2D sprite blit this engine makes is colour keyed (59 per
+	// frame in a level), and they render with the key colour opaque.  The
+	// existing trace above is compiled out of release builds, so report the
+	// formats and the key actually used.
+	// KDR-DIAG: when the destination carries alpha, report what the alpha
+	// actually looks like -- a clean 0/255 cutout mask, or arbitrary values
+	// that would make the surface partly transparent everywhere.
+	if (DestFormat == D3DFMT_A8R8G8B8 && SrcFormat == D3DFMT_A8R8G8B8)
+	{
+		LOG_LIMIT(200, __FUNCTION__ << " KDRALPHASRC srcFmt=" << (DWORD)SrcFormat <<
+			" dstFmt=" << (DWORD)DestFormat << " w=" << (SrcRect.right - SrcRect.left) <<
+			" h=" << (SrcRect.bottom - SrcRect.top));
+	}
+
+	if (IsColorKey)
+	{
+		LOG_LIMIT(3000, __FUNCTION__ << " KDRCKDIAG srcFmt=" << (DWORD)SrcFormat <<
+			" dstFmt=" << (DWORD)DestFormat <<
+			" key=" << (DWORD)ColorKey <<
+			" stretch=" << (DWORD)IsStretchRect <<
+			" srcEmu=" << (DWORD)pSourceSurface->IsUsingEmulation() <<
+			" dstEmu=" << (DWORD)IsUsingEmulation());
+	}
 
 #ifdef ENABLE_PROFILING
 	Logging::Log() << __FUNCTION__ << " (" << pSourceSurface << ") -> (" << this << ")" <<
@@ -7723,16 +7818,16 @@ HRESULT m_IDirectDrawSurfaceX::CopySurface(m_IDirectDrawSurfaceX* pSourceSurface
 			switch (ByteCount)
 			{
 			case 1:
-				SimpleColorKeyCopy<BYTE>((BYTE)ColorKey, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
+				SimpleColorKeyCopy<BYTE>((BYTE)ColorKey, (BYTE)ColorKeyMask, (BYTE)AlphaOrMask, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
 				break;
 			case 2:
-				SimpleColorKeyCopy<WORD>((WORD)ColorKey, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
+				SimpleColorKeyCopy<WORD>((WORD)ColorKey, (WORD)ColorKeyMask, (WORD)AlphaOrMask, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
 				break;
 			case 3:
-				SimpleColorKeyCopy<TRIBYTE>((TRIBYTE)ColorKey, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
+				SimpleColorKeyCopy<TRIBYTE>((TRIBYTE)ColorKey, (TRIBYTE)ColorKeyMask, (TRIBYTE)AlphaOrMask, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
 				break;
 			case 4:
-				SimpleColorKeyCopy<DWORD>((DWORD)ColorKey, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
+				SimpleColorKeyCopy<DWORD>((DWORD)ColorKey, (DWORD)ColorKeyMask, (DWORD)AlphaOrMask, SrcBuffer, DestBuffer, SrcLockRect.Pitch, DestPitch, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorLeftRight);
 				break;
 			}
 			hr = DD_OK;
@@ -7743,16 +7838,16 @@ HRESULT m_IDirectDrawSurfaceX::CopySurface(m_IDirectDrawSurfaceX* pSourceSurface
 		switch (ByteCount)
 		{
 		case 1:
-			ComplexCopy<BYTE>((BYTE)ColorKey, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
+			ComplexCopy<BYTE>((BYTE)ColorKey, (BYTE)ColorKeyMask, (BYTE)AlphaOrMask, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
 			break;
 		case 2:
-			ComplexCopy<WORD>((WORD)ColorKey, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
+			ComplexCopy<WORD>((WORD)ColorKey, (WORD)ColorKeyMask, (WORD)AlphaOrMask, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
 			break;
 		case 3:
-			ComplexCopy<TRIBYTE>((TRIBYTE)ColorKey, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
+			ComplexCopy<TRIBYTE>((TRIBYTE)ColorKey, (TRIBYTE)ColorKeyMask, (TRIBYTE)AlphaOrMask, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
 			break;
 		case 4:
-			ComplexCopy<DWORD>((DWORD)ColorKey, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
+			ComplexCopy<DWORD>((DWORD)ColorKey, (DWORD)ColorKeyMask, (DWORD)AlphaOrMask, SrcLockRect, DestLockRect, SrcRectWidth, SrcRectHeight, DestRectWidth, DestRectHeight, IsColorKey, IsMirrorUpDown, IsMirrorLeftRight);
 			break;
 		}
 		hr = DD_OK;

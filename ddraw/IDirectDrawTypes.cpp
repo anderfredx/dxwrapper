@@ -41,12 +41,12 @@ bool IsDisplayResolution(DWORD Width, DWORD Height)
 }
 
 // Simple copy with ColorKey and Mirroring
-template void SimpleColorKeyCopy<BYTE>(BYTE ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
-template void SimpleColorKeyCopy<WORD>(WORD ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
-template void SimpleColorKeyCopy<TRIBYTE>(TRIBYTE ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
-template void SimpleColorKeyCopy<DWORD>(DWORD ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
+template void SimpleColorKeyCopy<BYTE>(BYTE ColorKey, BYTE ColorKeyMask, BYTE AlphaOrMask, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
+template void SimpleColorKeyCopy<WORD>(WORD ColorKey, WORD ColorKeyMask, WORD AlphaOrMask, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
+template void SimpleColorKeyCopy<TRIBYTE>(TRIBYTE ColorKey, TRIBYTE ColorKeyMask, TRIBYTE AlphaOrMask, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
+template void SimpleColorKeyCopy<DWORD>(DWORD ColorKey, DWORD ColorKeyMask, DWORD AlphaOrMask, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
 template <typename T>
-void SimpleColorKeyCopy(T ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight)
+void SimpleColorKeyCopy(T ColorKey, T ColorKeyMask, T AlphaOrMask, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight)
 {
 	T* SrcBufferLoop = reinterpret_cast<T*>(SrcBuffer);
 	T* DestBufferLoop = reinterpret_cast<T*>(DestBuffer);
@@ -56,9 +56,12 @@ void SimpleColorKeyCopy(T ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPi
 		for (LONG x = 0; x < DestRectWidth; x++)
 		{
 			T PixelColor = SrcBufferLoop[IsMirrorLeftRight ? DestRectWidth - x - 1 : x];
-			if (!IsColorKey || PixelColor != ColorKey)
+			// Bits the format does not use must not take part in the
+			// comparison: a cyan texel in X8R8G8B8 reads as 0xFF00FFFF while
+			// the key the application set is 0x0000FFFF.
+			if (!IsColorKey || (PixelColor & ColorKeyMask) != (ColorKey & ColorKeyMask))
 			{
-				DestBufferLoop[x] = PixelColor;
+				DestBufferLoop[x] = PixelColor | AlphaOrMask;
 			}
 		}
 		SrcBufferLoop = reinterpret_cast<T*>((BYTE*)SrcBufferLoop + SrcPitch);
@@ -67,12 +70,12 @@ void SimpleColorKeyCopy(T ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPi
 }
 
 // Copy memory (complex)
-template void ComplexCopy<BYTE>(BYTE ColorKey, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
-template void ComplexCopy<WORD>(WORD ColorKey, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
-template void ComplexCopy<TRIBYTE>(TRIBYTE ColorKey, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
-template void ComplexCopy<DWORD>(DWORD ColorKey, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
+template void ComplexCopy<BYTE>(BYTE ColorKey, BYTE ColorKeyMask, BYTE AlphaOrMask, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
+template void ComplexCopy<WORD>(WORD ColorKey, WORD ColorKeyMask, WORD AlphaOrMask, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
+template void ComplexCopy<TRIBYTE>(TRIBYTE ColorKey, TRIBYTE ColorKeyMask, TRIBYTE AlphaOrMask, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
+template void ComplexCopy<DWORD>(DWORD ColorKey, DWORD ColorKeyMask, DWORD AlphaOrMask, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
 template <typename T>
-void ComplexCopy(T ColorKey, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight)
+void ComplexCopy(T ColorKey, T ColorKeyMask, T AlphaOrMask, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight)
 {
 	float WidthRatio = ((float)SrcRectWidth / (float)DestRectWidth);
 	float HeightRatio = ((float)SrcRectHeight / (float)DestRectHeight);
@@ -87,9 +90,9 @@ void ComplexCopy(T ColorKey, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLock
 			DWORD sx = (DWORD)((float)x * WidthRatio);
 			T PixelColor = SrcBufferLoop[IsMirrorLeftRight ? SrcRectWidth - sx - 1 : sx];
 
-			if (!IsColorKey || PixelColor != ColorKey)
+			if (!IsColorKey || (PixelColor & ColorKeyMask) != (ColorKey & ColorKeyMask))
 			{
-				DestBufferLoop[x] = PixelColor;
+				DestBufferLoop[x] = PixelColor | AlphaOrMask;
 			}
 		}
 		DWORD sx = (DWORD)((float)(y + 1) * HeightRatio);

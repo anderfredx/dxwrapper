@@ -124,6 +124,7 @@ struct MOUSEHOOK
 struct DRAWSTATEBACKUP
 {
 	DWORD ssMagFilter = 0;
+	DWORD ssMinFilter = 0;
 	DWORD ss1addressU = 0;
 	DWORD ss1addressV = 0;
 	DWORD tsColorOP = 0;
@@ -259,9 +260,9 @@ static constexpr DWORD DDS_HEADER_FLAGS_PITCH	= 0x00000008;
 void AddDisplayResolution(DWORD Width, DWORD Height);
 bool IsDisplayResolution(DWORD Width, DWORD Height);
 template <typename T>
-void SimpleColorKeyCopy(T ColorKey, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
+void SimpleColorKeyCopy(T ColorKey, T ColorKeyMask, T AlphaOrMask, BYTE* SrcBuffer, BYTE* DestBuffer, INT SrcPitch, INT DestPitch, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorLeftRight);
 template <typename T>
-void ComplexCopy(T ColorKey, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
+void ComplexCopy(T ColorKey, T ColorKeyMask, T AlphaOrMask, D3DLOCKED_RECT SrcLockRect, D3DLOCKED_RECT DestLockRect, LONG SrcRectWidth, LONG SrcRectHeight, LONG DestRectWidth, LONG DestRectHeight, bool IsColorKey, bool IsMirrorUpDown, bool IsMirrorLeftRight);
 D3DCOLOR ConvertPixelColor(D3DCOLOR PixelColor, const DDPIXELFORMAT& ddpfPixelFormat);
 bool HasStencil(D3DFORMAT Format);
 DWORD GetDepthColor(float DepthValue, D3DFORMAT Format, DWORD& BPP);
